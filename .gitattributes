@@ -4,6 +4,9 @@
 *.md text eol=crlf
 *.txt text eol=crlf
 VERSION text eol=crlf
+LICENSE text eol=crlf
+.gitattributes text eol=crlf
+.gitignore text eol=crlf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.png binary
