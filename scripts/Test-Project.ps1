@@ -182,6 +182,49 @@ if (Test-Path -LiteralPath $workflowPath -PathType Leaf) {
     }
 }
 
+$launcherPath = Join-Path $root 'Run-DAoC-Loading-Speed-Fix.cmd'
+if (Test-Path -LiteralPath $launcherPath -PathType Leaf) {
+    $launcherText = Get-Content -LiteralPath $launcherPath -Raw
+    if ($launcherText -notmatch [regex]::Escape('setlocal EnableExtensions DisableDelayedExpansion')) {
+        Add-Failure 'The launcher must disable delayed expansion for path safety.'
+    }
+    if ($launcherText -notmatch [regex]::Escape('if exist "%SCRIPT%" goto :run')) {
+        Add-Failure 'The launcher does not use the path-safe label-based start flow.'
+    }
+    if ($launcherText -match '(?im)^\s*if\b.*\(\s*$') {
+        Add-Failure 'The launcher contains a parenthesized IF block that can break paths containing parentheses.'
+    }
+    if ($launcherText -match [regex]::Escape('echo %SCRIPT%')) {
+        Add-Failure 'The launcher expands the script path into command syntax.'
+    }
+
+    $launcherTestRoot = Join-Path ([IO.Path]::GetTempPath()) 'DAoC Loading Speed Fix Launcher (2)'
+    try {
+        if (Test-Path -LiteralPath $launcherTestRoot) {
+            Remove-Item -LiteralPath $launcherTestRoot -Recurse -Force
+        }
+        [void](New-Item -ItemType Directory -Path $launcherTestRoot -Force)
+        Copy-Item -LiteralPath $launcherPath -Destination (Join-Path $launcherTestRoot 'Run-DAoC-Loading-Speed-Fix.cmd') -Force
+        [IO.File]::WriteAllText(
+            (Join-Path $launcherTestRoot 'DAoC-Loading-Speed-Fix.ps1'),
+            "# Created by Cosmy.`r`n",
+            [Text.Encoding]::ASCII
+        )
+        & (Join-Path $launcherTestRoot 'Run-DAoC-Loading-Speed-Fix.cmd') --launcher-test
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure "The launcher failed from a path containing parentheses. Exit code: $LASTEXITCODE"
+        }
+    }
+    catch {
+        Add-Failure "The launcher path compatibility test failed: $($_.Exception.Message)"
+    }
+    finally {
+        if (Test-Path -LiteralPath $launcherTestRoot) {
+            Remove-Item -LiteralPath $launcherTestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 $manifestPath = Join-Path $root 'SHA256SUMS.txt'
 if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
     $manifestEntries = @{}

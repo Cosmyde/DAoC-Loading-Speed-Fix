@@ -94,13 +94,13 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Xaml
 Add-Type -AssemblyName System.Windows.Forms
 
-$script:AppVersion = '1.0.2'
+$script:AppVersion = '1.0.3'
 $script:Author = 'Cosmy'
 $script:ScriptRoot = Split-Path -Parent $PSCommandPath
 $script:HelperPath = Join-Path $script:ScriptRoot 'DAoC-Loading-Speed-Fix-Helper.ps1'
 $script:BrandImagePath = Join-Path $script:ScriptRoot 'Assets\AppBanner.png'
 $script:AppIconPath = Join-Path $script:ScriptRoot 'Assets\AppIcon.ico'
-$script:ExpectedHelperSha256 = '2349B570D4F710AA40003B9DA2070A6FD9C42D95344B435E261A50DCBBEF4B15'
+$script:ExpectedHelperSha256 = 'C9BE242DEC72036A6206B9B00F72D309398A0A2F808DFBE0728482790364B240'
 $script:ProcessExclusionName = 'game.dll'
 $script:RestartNotice = 'Fully close and restart Dark Age of Camelot for the fix to take effect.'
 $script:CoreFileNames = @(
@@ -1200,7 +1200,7 @@ function Get-BitmapImage {
                 </Border>
 
                 <StackPanel Grid.Row="4" Margin="2,18,2,0">
-                    <TextBlock Text="VERSION 1.0.2" Foreground="#BDA38F" FontSize="11" FontWeight="SemiBold"/>
+                    <TextBlock Text="VERSION 1.0.3" Foreground="#BDA38F" FontSize="11" FontWeight="SemiBold"/>
                     <TextBlock Text="One normal UAC approval is required by Windows. No folder selection is required on Windows 10 or Windows 11." Foreground="#A88F7F" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
                 </StackPanel>
             </Grid>

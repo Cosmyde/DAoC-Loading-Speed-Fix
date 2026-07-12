@@ -21,6 +21,8 @@ A one-click Windows utility for the Dark Age of Camelot Faster Teleport/Load Tim
 
 The application opens maximized and the fix starts automatically. No DAoC folder selection or manual Windows Security configuration is required.
 
+The extracted folder can be located in a path containing spaces or parentheses. Keep all release files together in the same folder.
+
 ## Restart required
 
 After the exclusions are applied, fully close every running Dark Age of Camelot client and start the game again. The Faster Teleport/Load Times Fix takes effect after the game is restarted.

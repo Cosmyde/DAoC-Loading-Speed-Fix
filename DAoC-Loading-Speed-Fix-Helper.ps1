@@ -17,7 +17,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:Version = '1.0.2'
+$script:Version = '1.0.3'
 $script:Author = 'Cosmy'
 $script:CoreFileNames = @(
     'game.dll',
