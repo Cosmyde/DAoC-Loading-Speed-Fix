@@ -17,7 +17,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:Version = '1.0.0'
+$script:Version = '1.0.2'
 $script:Author = 'Cosmy'
 $script:CoreFileNames = @(
     'game.dll',
@@ -28,6 +28,7 @@ $script:CoreFileNames = @(
     'patchui.dll',
     'patchui_win.dll'
 )
+$script:ProcessExclusionName = 'game.dll'
 
 function Test-IsAdministrator {
     try {
@@ -49,6 +50,27 @@ function ConvertTo-ComparablePath {
     catch {
         return $Path.Trim().TrimEnd('\').ToLowerInvariant()
     }
+}
+
+function ConvertTo-ComparableProcess {
+    param([Parameter(Mandatory = $true)][string]$ProcessName)
+
+    return $ProcessName.Trim().ToLowerInvariant()
+}
+
+function Resolve-ValidatedProcessExclusion {
+    param([Parameter(Mandatory = $true)][string]$ProcessName)
+
+    if ([string]::IsNullOrWhiteSpace($ProcessName)) {
+        throw 'An empty process exclusion was supplied.'
+    }
+
+    $normalized = $ProcessName.Trim()
+    if (-not $normalized.Equals($script:ProcessExclusionName, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsupported process exclusion: $ProcessName"
+    }
+
+    return $script:ProcessExclusionName
 }
 
 function Test-IsSameOrChildPath {
@@ -228,6 +250,22 @@ function Test-PathEntryPresent {
     return $false
 }
 
+function Test-ProcessEntryPresent {
+    param([Parameter(Mandatory = $true)][string]$ProcessName)
+
+    $expected = ConvertTo-ComparableProcess -ProcessName $ProcessName
+    $preferences = Get-DefenderPreferences
+    foreach ($entry in @($preferences.ExclusionProcess)) {
+        if ($null -eq $entry) {
+            continue
+        }
+        if ((ConvertTo-ComparableProcess -ProcessName ([string]$entry)) -eq $expected) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Wait-PathEntryState {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -238,6 +276,24 @@ function Wait-PathEntryState {
     $deadline = (Get-Date).AddMilliseconds([Math]::Max(500, $MaximumMilliseconds))
     do {
         if ((Test-PathEntryPresent -Path $Path) -eq $ShouldExist) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $deadline)
+
+    return $false
+}
+
+function Wait-ProcessEntryState {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProcessName,
+        [Parameter(Mandatory = $true)][bool]$ShouldExist,
+        [int]$MaximumMilliseconds = 9000
+    )
+
+    $deadline = (Get-Date).AddMilliseconds([Math]::Max(500, $MaximumMilliseconds))
+    do {
+        if ((Test-ProcessEntryPresent -ProcessName $ProcessName) -eq $ShouldExist) {
             return $true
         }
         Start-Sleep -Milliseconds 300
@@ -268,6 +324,32 @@ function Invoke-PreferenceMethod {
         $returnValue = [int]$response.ReturnValue
         if ($returnValue -ne 0) {
             throw "The Defender WMI provider returned code $returnValue for $Method."
+        }
+    }
+}
+
+function Invoke-ProcessPreferenceMethod {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Add', 'Remove')][string]$Method,
+        [Parameter(Mandatory = $true)][string]$ProcessName
+    )
+
+    $arguments = @{
+        ExclusionProcess = [string[]]@($ProcessName)
+        Force = $true
+    }
+
+    $response = Invoke-CimMethod `
+        -Namespace 'root/Microsoft/Windows/Defender' `
+        -ClassName 'MSFT_MpPreference' `
+        -MethodName $Method `
+        -Arguments $arguments `
+        -ErrorAction Stop
+
+    if ($null -ne $response -and $response.PSObject.Properties.Name -contains 'ReturnValue') {
+        $returnValue = [int]$response.ReturnValue
+        if ($returnValue -ne 0) {
+            throw "The Defender WMI provider returned code $returnValue for $Method process exclusion."
         }
     }
 }
@@ -434,9 +516,13 @@ $result = [ordered]@{
     Completed = $null
     Added = @()
     Existing = @()
+    AddedProcesses = @()
+    ExistingProcesses = @()
     EffectiveExisting = @()
     Removed = @()
     AlreadyAbsent = @()
+    RemovedProcesses = @()
+    ProcessesAlreadyAbsent = @()
     Failed = @()
     Warnings = @()
     VerificationTool = $null
@@ -455,9 +541,16 @@ try {
     }
 
     $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $requestedPaths = @($request.Paths)
-    if ($requestedPaths.Count -eq 0) {
-        throw 'The request contained no installation paths.'
+    $requestedPaths = @()
+    $requestedProcesses = @()
+    if ($request.PSObject.Properties.Name -contains 'Paths') {
+        $requestedPaths = @($request.Paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    }
+    if ($request.PSObject.Properties.Name -contains 'Processes') {
+        $requestedProcesses = @($request.Processes | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    }
+    if ($requestedPaths.Count -eq 0 -and $requestedProcesses.Count -eq 0) {
+        throw 'The request contained no exclusion entries.'
     }
 
     $validatedFolders = New-Object System.Collections.ArrayList
@@ -477,14 +570,33 @@ try {
         }
         catch {
             $result.Failed += [pscustomobject]@{
+                EntryType = 'Path'
                 Path = [string]$requestedPath
                 Error = $_.Exception.Message
             }
         }
     }
 
-    if ($validatedFolders.Count -eq 0) {
-        throw 'No request path passed validation.'
+    $validatedProcesses = New-Object System.Collections.ArrayList
+    $processSet = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($requestedProcess in $requestedProcesses) {
+        try {
+            $processName = Resolve-ValidatedProcessExclusion -ProcessName ([string]$requestedProcess)
+            if ($processSet.Add($processName)) {
+                [void]$validatedProcesses.Add($processName)
+            }
+        }
+        catch {
+            $result.Failed += [pscustomobject]@{
+                EntryType = 'Process'
+                Path = [string]$requestedProcess
+                Error = $_.Exception.Message
+            }
+        }
+    }
+
+    if ($validatedFolders.Count -eq 0 -and $validatedProcesses.Count -eq 0) {
+        throw 'No request entry passed validation.'
     }
 
     try {
@@ -541,7 +653,30 @@ try {
             }
             catch {
                 $result.Failed += [pscustomobject]@{
+                    EntryType = 'Path'
                     Path = [string]$entry
+                    Error = $_.Exception.Message
+                }
+            }
+        }
+
+        foreach ($processName in $validatedProcesses) {
+            try {
+                if (Test-ProcessEntryPresent -ProcessName ([string]$processName)) {
+                    $result.ExistingProcesses += [string]$processName
+                    continue
+                }
+
+                Invoke-ProcessPreferenceMethod -Method 'Add' -ProcessName ([string]$processName)
+                if (-not (Wait-ProcessEntryState -ProcessName ([string]$processName) -ShouldExist $true)) {
+                    throw 'The provider call completed, but the exact process did not appear in the Defender process exclusion list.'
+                }
+                $result.AddedProcesses += [string]$processName
+            }
+            catch {
+                $result.Failed += [pscustomobject]@{
+                    EntryType = 'Process'
+                    Path = [string]$processName
                     Error = $_.Exception.Message
                 }
             }
@@ -581,7 +716,30 @@ try {
             }
             catch {
                 $result.Failed += [pscustomobject]@{
+                    EntryType = 'Path'
                     Path = [string]$entry
+                    Error = $_.Exception.Message
+                }
+            }
+        }
+
+        foreach ($processName in $validatedProcesses) {
+            try {
+                if (-not (Test-ProcessEntryPresent -ProcessName ([string]$processName))) {
+                    $result.ProcessesAlreadyAbsent += [string]$processName
+                    continue
+                }
+
+                Invoke-ProcessPreferenceMethod -Method 'Remove' -ProcessName ([string]$processName)
+                if (-not (Wait-ProcessEntryState -ProcessName ([string]$processName) -ShouldExist $false)) {
+                    throw 'The provider call completed, but the exact process remained in the Defender process exclusion list.'
+                }
+                $result.RemovedProcesses += [string]$processName
+            }
+            catch {
+                $result.Failed += [pscustomobject]@{
+                    EntryType = 'Process'
+                    Path = [string]$processName
                     Error = $_.Exception.Message
                 }
             }

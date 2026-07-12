@@ -94,13 +94,14 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Xaml
 Add-Type -AssemblyName System.Windows.Forms
 
-$script:AppVersion = '1.0.1'
+$script:AppVersion = '1.0.2'
 $script:Author = 'Cosmy'
 $script:ScriptRoot = Split-Path -Parent $PSCommandPath
 $script:HelperPath = Join-Path $script:ScriptRoot 'DAoC-Loading-Speed-Fix-Helper.ps1'
 $script:BrandImagePath = Join-Path $script:ScriptRoot 'Assets\AppBanner.png'
 $script:AppIconPath = Join-Path $script:ScriptRoot 'Assets\AppIcon.ico'
-$script:ExpectedHelperSha256 = '1916D10D7BABB2A1324EAAB72454080FA561C37A3EE053720B83C220603FDA61'
+$script:ExpectedHelperSha256 = '2349B570D4F710AA40003B9DA2070A6FD9C42D95344B435E261A50DCBBEF4B15'
+$script:ProcessExclusionName = 'game.dll'
 $script:CoreFileNames = @(
     'game.dll',
     'libxml2.dll',
@@ -218,7 +219,7 @@ function Set-BusyState {
     $script:IsBusy = $Busy
     $script:RunButton.IsEnabled = -not $Busy
     $script:CloseButton.IsEnabled = -not $Busy
-    $script:RollbackButton.IsEnabled = (-not $Busy) -and (Get-StatePathCount -gt 0)
+    $script:RollbackButton.IsEnabled = (-not $Busy) -and (Get-StateEntryCount -gt 0)
     $script:OpenLogsButton.IsEnabled = $true
 }
 
@@ -711,7 +712,8 @@ function Write-JsonFile {
 function Invoke-HelperOperation {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('Apply', 'Remove')][string]$Mode,
-        [Parameter(Mandatory = $true)][string[]]$Paths
+        [string[]]$Paths = @(),
+        [string[]]$Processes = @()
     )
 
     if (-not (Test-Path -LiteralPath $script:HelperPath -PathType Leaf)) {
@@ -732,12 +734,13 @@ function Invoke-HelperOperation {
         Author = $script:Author
         Created = (Get-Date).ToString('o')
         Paths = @($Paths)
+        Processes = @($Processes)
     }) -Path $requestPath
 
     $powerShell = Get-NativePowerShellPath
     $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$($script:HelperPath)`" -Mode $Mode -RequestPath `"$requestPath`" -ResultPath `"$resultPath`""
 
-    Write-Log -Level 'INFO' -Message "Starting isolated helper in $Mode mode for $($Paths.Count) validated folder path(s)."
+    Write-Log -Level 'INFO' -Message "Starting isolated helper in $Mode mode for $($Paths.Count) path entry source(s) and $($Processes.Count) process entry or entries."
     $process = Start-Process -FilePath $powerShell -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     Write-Log -Level 'INFO' -Message "Helper exit code: $($process.ExitCode)"
 
@@ -767,47 +770,73 @@ function Load-State {
     }
 }
 
-function Get-StatePathCount {
+function Get-StateValues {
+    param(
+        $State,
+        [Parameter(Mandatory = $true)][string]$PropertyName
+    )
+
+    if ($null -eq $State -or -not ($State.PSObject.Properties.Name -contains $PropertyName)) {
+        return @()
+    }
+    return @($State.$PropertyName | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+}
+
+function Get-StateEntryCount {
     $state = Load-State
     if ($null -eq $state) {
         return 0
     }
-    return @($state.AddedPaths).Count
+    return @(Get-StateValues -State $state -PropertyName 'AddedPaths').Count +
+           @(Get-StateValues -State $state -PropertyName 'AddedProcesses').Count
 }
 
 function Save-AddedState {
     param(
-        [Parameter(Mandatory = $true)][string[]]$AddedPaths,
+        [string[]]$AddedPaths = @(),
+        [string[]]$AddedProcesses = @(),
         [Parameter(Mandatory = $true)][object[]]$Installations
     )
 
     $existing = Load-State
-    $set = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
-    if ($null -ne $existing) {
-        foreach ($path in @($existing.AddedPaths)) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$path)) {
-                [void]$set.Add([string]$path)
-            }
-        }
+    $pathSet = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+    $processSet = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($path in @(Get-StateValues -State $existing -PropertyName 'AddedPaths')) {
+        [void]$pathSet.Add([string]$path)
+    }
+    foreach ($processName in @(Get-StateValues -State $existing -PropertyName 'AddedProcesses')) {
+        [void]$processSet.Add([string]$processName)
     }
     foreach ($path in $AddedPaths) {
-        [void]$set.Add($path)
+        if (-not [string]::IsNullOrWhiteSpace([string]$path)) {
+            [void]$pathSet.Add([string]$path)
+        }
+    }
+    foreach ($processName in $AddedProcesses) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$processName)) {
+            [void]$processSet.Add([string]$processName)
+        }
     }
 
     $state = [ordered]@{
         Version = $script:AppVersion
         Author = $script:Author
         Updated = (Get-Date).ToString('o')
-        AddedPaths = @($set)
+        AddedPaths = @($pathSet)
+        AddedProcesses = @($processSet)
         Installations = @($Installations | ForEach-Object { [string]$_.Path })
     }
     Write-JsonFile -Value $state -Path $script:StatePath
 }
 
 function Save-RemainingState {
-    param([Parameter(Mandatory = $true)][string[]]$RemainingPaths)
+    param(
+        [string[]]$RemainingPaths = @(),
+        [string[]]$RemainingProcesses = @()
+    )
 
-    if ($RemainingPaths.Count -eq 0) {
+    if ($RemainingPaths.Count -eq 0 -and $RemainingProcesses.Count -eq 0) {
         Remove-Item -LiteralPath $script:StatePath -Force -ErrorAction SilentlyContinue
         return
     }
@@ -817,6 +846,7 @@ function Save-RemainingState {
         Author = $script:Author
         Updated = (Get-Date).ToString('o')
         AddedPaths = @($RemainingPaths)
+        AddedProcesses = @($RemainingProcesses)
         Installations = @()
     }
     Write-JsonFile -Value $state -Path $script:StatePath
@@ -853,7 +883,8 @@ function Write-HelperResultDetails {
     }
 
     foreach ($failure in @($Result.Failed)) {
-        Write-Log -Level 'ERROR' -Message "Path failed: $($failure.Path) -- $($failure.Error)"
+        $entryType = if ($failure.PSObject.Properties.Name -contains 'EntryType') { [string]$failure.EntryType } else { 'Path' }
+        Write-Log -Level 'ERROR' -Message "$entryType exclusion failed: $($failure.Path) -- $($failure.Error)"
     }
 
     if (-not [string]::IsNullOrWhiteSpace([string]$Result.FatalError)) {
@@ -880,43 +911,57 @@ function Invoke-AutomaticFix {
             throw 'Validated installations were found, but no installation folder could be prepared.'
         }
 
-        Set-UiStatus -Title 'Applying the loading speed fix' -Detail "Configuring folder and core-file exclusions for $($targets.Count) validated installation(s)..." -State 'Working'
-        Write-Log -Level 'INFO' -Message "Applying supported Defender path exclusions for $($targets.Count) validated DAoC installation(s)."
+        Set-UiStatus -Title 'Applying the loading speed fix' -Detail "Configuring folder, core-file, and game.dll process exclusions for $($targets.Count) validated installation(s)..." -State 'Working'
+        Write-Log -Level 'INFO' -Message "Applying supported Defender path exclusions and the game.dll process exclusion for $($targets.Count) validated DAoC installation(s)."
         foreach ($target in $targets) {
             Write-Log -Level 'INFO' -Message "Requested validated installation: $target"
         }
 
-        $result = Invoke-HelperOperation -Mode 'Apply' -Paths $targets
+        $result = Invoke-HelperOperation -Mode 'Apply' -Paths $targets -Processes @($script:ProcessExclusionName)
         Write-HelperResultDetails -Result $result
 
-        $added = @($result.Added)
-        $existing = @($result.Existing)
+        $addedPaths = @($result.Added)
+        $existingPaths = @($result.Existing)
+        $addedProcesses = @($result.AddedProcesses)
+        $existingProcesses = @($result.ExistingProcesses)
         $failed = @($result.Failed)
         $warnings = @($result.Warnings)
         $verificationWarnings = @($result.Verification | Where-Object { $_.State -ne $true })
+        $addedCount = $addedPaths.Count + $addedProcesses.Count
+        $existingCount = $existingPaths.Count + $existingProcesses.Count
 
-        if ($added.Count -gt 0) {
-            Save-AddedState -AddedPaths $added -Installations $installations
+        if ($addedCount -gt 0) {
+            Save-AddedState -AddedPaths $addedPaths -AddedProcesses $addedProcesses -Installations $installations
         }
 
-        foreach ($path in $added) {
-            Write-Log -Level 'OK' -Message "Added and confirmed exact exclusion entry: $path"
+        foreach ($path in $addedPaths) {
+            Write-Log -Level 'OK' -Message "Added and confirmed exact path exclusion: $path"
         }
-        foreach ($path in $existing) {
-            Write-Log -Level 'INFO' -Message "Exact exclusion entry already present: $path"
+        foreach ($path in $existingPaths) {
+            Write-Log -Level 'INFO' -Message "Exact path exclusion already present: $path"
+        }
+        foreach ($processName in $addedProcesses) {
+            Write-Log -Level 'OK' -Message "Added and confirmed exact process exclusion: $processName"
+        }
+        foreach ($processName in $existingProcesses) {
+            Write-Log -Level 'INFO' -Message "Exact process exclusion already present: $processName"
+        }
+
+        if ([string]::IsNullOrWhiteSpace([string]$result.FatalError) -and $failed.Count -eq 0) {
+            Write-Log -Level 'IMPORTANT' -Message 'Close and restart Dark Age of Camelot before testing the Faster Teleport/Load Times Fix.'
         }
 
         if (-not [string]::IsNullOrWhiteSpace([string]$result.FatalError) -or $failed.Count -gt 0) {
-            Set-UiStatus -Title 'Loading speed fix was incomplete' -Detail "$($added.Count) entries added, $($existing.Count) already present, $($failed.Count) failed." -State 'Error' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Error' -Message "The Faster Teleport/Load Times Fix completed with one or more configuration failures.`r`n`r`nAdded entries: $($added.Count)`r`nAlready present: $($existing.Count)`r`nFailed entries: $($failed.Count)`r`n`r`nReview the activity log for the exact Windows error.`r`n$($script:LogPath)"
+            Set-UiStatus -Title 'Loading speed fix was incomplete' -Detail "$addedCount entries added, $existingCount already present, $($failed.Count) failed." -State 'Error' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Error' -Message "The Faster Teleport/Load Times Fix completed with one or more configuration failures.`r`n`r`nAdded entries: $addedCount`r`nAlready present: $existingCount`r`nFailed entries: $($failed.Count)`r`n`r`nReview the activity log for the exact Windows error.`r`n$($script:LogPath)"
         }
         elseif ($warnings.Count -gt 0 -or $verificationWarnings.Count -gt 0) {
-            Set-UiStatus -Title 'Fix configured with verification warning' -Detail "$($added.Count) entries added and $($existing.Count) already present. Windows reported a verification warning." -State 'Warning' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "The supported Defender exclusion entries were configured automatically.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $($added.Count)`r`nAlready present: $($existing.Count)`r`n`r`nWindows Defender returned one or more effective-state verification warnings. The entries were kept instead of being removed. Details are in:`r`n$($script:LogPath)"
+            Set-UiStatus -Title 'Fix configured - restart DAoC' -Detail "$addedCount entries added and $existingCount already present. Close and restart Dark Age of Camelot before testing the fix." -State 'Warning' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "The supported Defender exclusion entries were configured automatically.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nWorks on both Live Dark Age of Camelot and Eden.`r`n`r`nIMPORTANT: Close and restart Dark Age of Camelot before testing the fix.`r`n`r`nWindows Defender returned one or more effective-state verification warnings. The entries were kept instead of being removed. Details are in:`r`n$($script:LogPath)"
         }
         else {
-            Set-UiStatus -Title 'Loading speed fix completed' -Detail "$($added.Count) entries added and verified; $($existing.Count) were already present." -State 'Good' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Information' -Message "The Faster Teleport/Load Times Fix completed successfully.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $($added.Count)`r`nAlready present: $($existing.Count)`r`n`r`nThe tool configured each validated DAoC folder and its existing core files. No drive-wide, extension-wide, or name-only process exclusion was created."
+            Set-UiStatus -Title 'Fix completed - restart DAoC' -Detail "$addedCount entries added and verified; $existingCount were already present. Close and restart Dark Age of Camelot before testing the fix." -State 'Good' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Information' -Message "The Faster Teleport/Load Times Fix completed successfully.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nThe tool configured each validated DAoC folder, its existing core files, and the game.dll process exclusion.`r`n`r`nWorks on both Live Dark Age of Camelot and Eden.`r`n`r`nIMPORTANT: Close and restart Dark Age of Camelot before testing the fix."
         }
     }
     catch {
@@ -935,37 +980,51 @@ function Invoke-Rollback {
     }
 
     $state = Load-State
-    $paths = if ($null -eq $state) { @() } else { @($state.AddedPaths) }
-    if ($paths.Count -eq 0) {
+    $paths = @(Get-StateValues -State $state -PropertyName 'AddedPaths')
+    $processes = @(Get-StateValues -State $state -PropertyName 'AddedProcesses')
+    $entryCount = $paths.Count + $processes.Count
+    if ($entryCount -eq 0) {
         Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Message 'There are no tool-owned exclusion entries to remove.'
         return
     }
 
     Set-BusyState -Busy $true
     try {
-        Set-UiStatus -Title 'Rolling back' -Detail "Removing $($paths.Count) exact exclusion entry or entries previously added by this tool..." -State 'Working'
-        $result = Invoke-HelperOperation -Mode 'Remove' -Paths $paths
+        Set-UiStatus -Title 'Rolling back' -Detail "Removing $entryCount exact exclusion entry or entries previously added by this tool..." -State 'Working'
+        $result = Invoke-HelperOperation -Mode 'Remove' -Paths $paths -Processes $processes
         Write-HelperResultDetails -Result $result
 
-        $removed = @($result.Removed)
-        $absent = @($result.AlreadyAbsent)
-        $failedPaths = @($result.Failed | ForEach-Object { [string]$_.Path })
-        Save-RemainingState -RemainingPaths $failedPaths
+        $removedPaths = @($result.Removed)
+        $absentPaths = @($result.AlreadyAbsent)
+        $removedProcesses = @($result.RemovedProcesses)
+        $absentProcesses = @($result.ProcessesAlreadyAbsent)
+        $failedPaths = @($result.Failed | Where-Object { -not ($_.PSObject.Properties.Name -contains 'EntryType') -or $_.EntryType -eq 'Path' } | ForEach-Object { [string]$_.Path })
+        $failedProcesses = @($result.Failed | Where-Object { $_.PSObject.Properties.Name -contains 'EntryType' -and $_.EntryType -eq 'Process' } | ForEach-Object { [string]$_.Path })
+        Save-RemainingState -RemainingPaths $failedPaths -RemainingProcesses $failedProcesses
 
-        foreach ($path in $removed) {
-            Write-Log -Level 'OK' -Message "Removed and confirmed exact exclusion entry: $path"
+        foreach ($path in $removedPaths) {
+            Write-Log -Level 'OK' -Message "Removed and confirmed exact path exclusion: $path"
         }
-        foreach ($path in $absent) {
-            Write-Log -Level 'INFO' -Message "Already absent during rollback: $path"
+        foreach ($path in $absentPaths) {
+            Write-Log -Level 'INFO' -Message "Path exclusion already absent during rollback: $path"
+        }
+        foreach ($processName in $removedProcesses) {
+            Write-Log -Level 'OK' -Message "Removed and confirmed exact process exclusion: $processName"
+        }
+        foreach ($processName in $absentProcesses) {
+            Write-Log -Level 'INFO' -Message "Process exclusion already absent during rollback: $processName"
         }
 
-        if ($failedPaths.Count -gt 0 -or -not [string]::IsNullOrWhiteSpace([string]$result.FatalError)) {
-            Set-UiStatus -Title 'Rollback was incomplete' -Detail "$($removed.Count) removed, $($absent.Count) already absent, $($failedPaths.Count) failed." -State 'Warning' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "Rollback completed with failures.`r`n`r`nRemoved: $($removed.Count)`r`nAlready absent: $($absent.Count)`r`nFailed: $($failedPaths.Count)`r`n`r`nOnly failed entries remain in rollback state."
+        $removedCount = $removedPaths.Count + $removedProcesses.Count
+        $absentCount = $absentPaths.Count + $absentProcesses.Count
+        $failedCount = $failedPaths.Count + $failedProcesses.Count
+        if ($failedCount -gt 0 -or -not [string]::IsNullOrWhiteSpace([string]$result.FatalError)) {
+            Set-UiStatus -Title 'Rollback was incomplete' -Detail "$removedCount removed, $absentCount already absent, $failedCount failed." -State 'Warning' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "Rollback completed with failures.`r`n`r`nRemoved: $removedCount`r`nAlready absent: $absentCount`r`nFailed: $failedCount`r`n`r`nOnly failed entries remain in rollback state."
         }
         else {
-            Set-UiStatus -Title 'Rollback completed' -Detail "$($removed.Count) removed; $($absent.Count) were already absent." -State 'Good' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Message 'All exclusion entries created by this tool were removed or were already absent.'
+            Set-UiStatus -Title 'Rollback completed' -Detail "$removedCount removed; $absentCount were already absent." -State 'Good' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Message 'All path and process exclusion entries created by this tool were removed or were already absent.'
         }
     }
     catch {
@@ -1131,19 +1190,25 @@ function Get-BitmapImage {
                         <Grid Margin="0,9,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <Ellipse Width="8" Height="8" Fill="#F08A27" VerticalAlignment="Top" Margin="0,5,0,0"/>
-                            <TextBlock Grid.Column="1" Text="Configure supported Defender exclusions" Foreground="#E6D8CC" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Column="1" Text="Configure folder, core-file, and game.dll process exclusions" Foreground="#E6D8CC" TextWrapping="Wrap"/>
                         </Grid>
                         <Grid Margin="0,9,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <Ellipse Width="8" Height="8" Fill="#D9D2CC" VerticalAlignment="Top" Margin="0,5,0,0"/>
                             <TextBlock Grid.Column="1" Text="Verify, log, and save rollback state" Foreground="#E6D8CC" TextWrapping="Wrap"/>
                         </Grid>
+                        <Grid Margin="0,9,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Ellipse Width="8" Height="8" Fill="#2F855A" VerticalAlignment="Top" Margin="0,5,0,0"/>
+                            <TextBlock Grid.Column="1" Text="Restart Dark Age of Camelot after completion" Foreground="#E6D8CC" TextWrapping="Wrap"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
                 <StackPanel Grid.Row="4" Margin="2,18,2,0">
-                    <TextBlock Text="VERSION 1.0.1" Foreground="#BDA38F" FontSize="11" FontWeight="SemiBold"/>
+                    <TextBlock Text="VERSION 1.0.2" Foreground="#BDA38F" FontSize="11" FontWeight="SemiBold"/>
                     <TextBlock Text="One normal UAC approval is required by Windows. No folder selection is required on Windows 10 or Windows 11." Foreground="#A88F7F" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                    <TextBlock Text="Works on both Live Dark Age of Camelot and Eden. After completion, close and restart Dark Age of Camelot." Foreground="#F0A15E" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,7,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -1180,6 +1245,9 @@ function Get-BitmapImage {
                     <StackPanel>
                         <TextBlock x:Name="StatusTitle" Text="Ready" FontSize="19" FontWeight="SemiBold"/>
                         <TextBlock x:Name="StatusDetail" Text="The Faster Teleport/Load Times Fix starts automatically." Foreground="{StaticResource MutedBrush}" Margin="0,6,18,0" TextWrapping="Wrap"/>
+                        <Border Background="#2A1711" BorderBrush="#A75224" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,10,18,0">
+                            <TextBlock Text="WORKS WITH LIVE DAoC AND EDEN. RESTART REQUIRED: After completion, close and restart Dark Age of Camelot before testing the fix." Foreground="#F0A15E" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        </Border>
                     </StackPanel>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100" Value="0"/>

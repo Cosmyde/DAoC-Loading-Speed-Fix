@@ -1,5 +1,5 @@
 Created by Cosmy.
 
 DAoC Loading Speed Fix - By Cosmy
-Version 1.0.0
+Version 1.0.2
 Windows 10 and Windows 11
