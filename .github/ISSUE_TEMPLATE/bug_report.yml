@@ -1,0 +1,49 @@
+# Created by Cosmy.
+name: Bug report
+description: Report a reproducible problem
+title: "[Bug] "
+labels:
+  - bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Created by Cosmy. Remove usernames and private paths before posting logs.
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Windows 10 or Windows 11, including the OS build.
+    validations:
+      required: true
+
+  - type: input
+    id: release
+    attributes:
+      label: Tool version
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe what happened and what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant log output
+      description: Remove usernames and private paths.
+      render: text
