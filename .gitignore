@@ -1,0 +1,8 @@
+# Created by Cosmy.
+/dist/
+/*.zip
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db

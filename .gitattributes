@@ -1,0 +1,10 @@
+# Created by Cosmy.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.md text eol=crlf
+*.txt text eol=crlf
+VERSION text eol=crlf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.png binary
+*.ico binary
