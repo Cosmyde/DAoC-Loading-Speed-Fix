@@ -122,6 +122,15 @@ if ((Test-Path $mainPath) -and (Test-Path $helperPath)) {
     if ($mainText -notmatch [regex]::Escape("ProcessExclusionName = 'game.dll'")) {
         Add-Failure 'The main application does not request the game.dll process exclusion.'
     }
+    if ($mainText -notmatch [regex]::Escape('Invoke-HelperOperation -Mode ''Apply'' -Paths $targets -Processes @($script:ProcessExclusionName)')) {
+        Add-Failure 'The automatic apply operation does not pass game.dll to the helper process exclusion list.'
+    }
+    if ($mainText -notmatch [regex]::Escape("RestartNotice = 'Fully close and restart Dark Age of Camelot for the fix to take effect.'")) {
+        Add-Failure 'The required post-apply Dark Age of Camelot restart notice is missing.'
+    }
+    if ($mainText -notmatch [regex]::Escape('IMPORTANT: $($script:RestartNotice)')) {
+        Add-Failure 'The completion dialog does not display the restart notice.'
+    }
     if ($helperText -notmatch [regex]::Escape('ExclusionProcess = [string[]]@($ProcessName)')) {
         Add-Failure 'The helper does not configure Defender ExclusionProcess through WMI.'
     }
@@ -130,23 +139,6 @@ if ((Test-Path $mainPath) -and (Test-Path $helperPath)) {
     }
     if ($mainText -notmatch [regex]::Escape('AddedProcesses')) {
         Add-Failure 'The main application does not track process exclusions for rollback.'
-    }
-    if ($mainText -notmatch [regex]::Escape('Processes @($script:ProcessExclusionName)')) {
-        Add-Failure 'The main application does not pass game.dll to the helper as a process exclusion.'
-    }
-    if ($mainText -notmatch [regex]::Escape('Works on both Live Dark Age of Camelot and Eden.')) {
-        Add-Failure 'The Live DAoC and Eden compatibility note is missing from the user interface.'
-    }
-
-    if ($mainText -notmatch [regex]::Escape('RESTART REQUIRED: After completion, close and restart Dark Age of Camelot before testing the fix.')) {
-        Add-Failure 'The persistent restart notice is missing from the user interface.'
-    }
-    if ($mainText -notmatch [regex]::Escape('IMPORTANT: Close and restart Dark Age of Camelot before testing the fix.')) {
-        Add-Failure 'The completion dialog restart notice is missing.'
-    }
-    $readmePath = Join-Path $root 'README.md'
-    if ((Test-Path -LiteralPath $readmePath -PathType Leaf) -and ((Get-Content -LiteralPath $readmePath -Raw) -notmatch [regex]::Escape('After the application reports completion, close and restart Dark Age of Camelot'))) {
-        Add-Failure 'README.md does not contain the required DAoC restart instruction.'
     }
 
     try {
@@ -172,10 +164,60 @@ if ((Test-Path $mainPath) -and (Test-Path $helperPath)) {
     }
 }
 
+$readmePath = Join-Path $root 'README.md'
+if (Test-Path -LiteralPath $readmePath -PathType Leaf) {
+    $readmeText = Get-Content -LiteralPath $readmePath -Raw
+    if ($readmeText -notmatch [regex]::Escape('fully close and restart Dark Age of Camelot')) {
+        Add-Failure 'README.md does not include the required post-apply restart instruction.'
+    }
+    if ($readmeText -notmatch [regex]::Escape('game.dll` process exclusion')) {
+        Add-Failure 'README.md does not document the game.dll process exclusion.'
+    }
+}
+
 if (Test-Path -LiteralPath $workflowPath -PathType Leaf) {
     $workflowText = Get-Content -LiteralPath $workflowPath -Raw
     if ($workflowText -notmatch [regex]::Escape('uses: actions/checkout@v7')) {
         Add-Failure 'The validation workflow must use actions/checkout@v7.'
+    }
+}
+
+$manifestPath = Join-Path $root 'SHA256SUMS.txt'
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    $manifestEntries = @{}
+    foreach ($line in @(Get-Content -LiteralPath $manifestPath)) {
+        if ($line -match '^([0-9A-Fa-f]{64})  (.+)$') {
+            $expectedHash = $matches[1].ToUpperInvariant()
+            $relativePath = $matches[2].Replace('/', '\')
+            if ($manifestEntries.ContainsKey($relativePath)) {
+                Add-Failure "SHA256SUMS.txt contains a duplicate entry: $relativePath"
+                continue
+            }
+            $manifestEntries[$relativePath] = $expectedHash
+            $targetPath = Join-Path $root $relativePath
+            if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+                Add-Failure "SHA256SUMS.txt references a missing file: $relativePath"
+                continue
+            }
+            $actualHash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($actualHash -ne $expectedHash) {
+                Add-Failure "SHA-256 mismatch for $relativePath."
+            }
+        }
+    }
+
+    if ($manifestEntries.Count -eq 0) {
+        Add-Failure 'SHA256SUMS.txt contains no file entries.'
+    }
+
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File)) {
+        if ($file.FullName -eq $manifestPath) { continue }
+        $relativePath = $file.FullName.Substring($root.Length + 1)
+        if ($relativePath.StartsWith('.git\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if ($relativePath.StartsWith('dist\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $manifestEntries.ContainsKey($relativePath)) {
+            Add-Failure "SHA256SUMS.txt is missing a file entry: $relativePath"
+        }
     }
 }
 
@@ -198,34 +240,6 @@ foreach ($file in $allTextFiles) {
     foreach ($pattern in $forbiddenPatterns) {
         if ($text -match [regex]::Escape($pattern)) {
             Add-Failure "$($file.FullName.Substring($root.Length + 1)) contains forbidden text: $pattern"
-        }
-    }
-}
-
-$manifestPath = Join-Path $root 'SHA256SUMS.txt'
-if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
-    $seenManifestPaths = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
-    foreach ($line in Get-Content -LiteralPath $manifestPath) {
-        if ($line -notmatch '^([A-Fa-f0-9]{64})  (.+)$') {
-            continue
-        }
-
-        $expectedHash = $matches[1].ToUpperInvariant()
-        $relativeManifestPath = $matches[2].Replace('/', '\')
-        if (-not $seenManifestPaths.Add($relativeManifestPath)) {
-            Add-Failure "SHA256SUMS.txt contains a duplicate entry: $relativeManifestPath"
-            continue
-        }
-
-        $manifestFilePath = Join-Path $root $relativeManifestPath
-        if (-not (Test-Path -LiteralPath $manifestFilePath -PathType Leaf)) {
-            Add-Failure "SHA256SUMS.txt references a missing file: $relativeManifestPath"
-            continue
-        }
-
-        $actualHash = (Get-FileHash -LiteralPath $manifestFilePath -Algorithm SHA256).Hash.ToUpperInvariant()
-        if ($actualHash -ne $expectedHash) {
-            Add-Failure "SHA-256 mismatch for $relativeManifestPath"
         }
     }
 }

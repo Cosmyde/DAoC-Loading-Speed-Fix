@@ -12,16 +12,4 @@ Before submitting a change:
 4. Run `scripts\Test-Project.ps1`.
 5. Describe the behavior being fixed and the Windows 10 or Windows 11 build used for testing.
 
-Run project validation:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Project.ps1
-```
-
-Build the end-user release ZIP:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1
-```
-
 All submitted work must preserve the application name and the attribution `Created by Cosmy.`

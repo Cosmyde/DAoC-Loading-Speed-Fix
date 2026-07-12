@@ -102,6 +102,7 @@ $script:BrandImagePath = Join-Path $script:ScriptRoot 'Assets\AppBanner.png'
 $script:AppIconPath = Join-Path $script:ScriptRoot 'Assets\AppIcon.ico'
 $script:ExpectedHelperSha256 = '2349B570D4F710AA40003B9DA2070A6FD9C42D95344B435E261A50DCBBEF4B15'
 $script:ProcessExclusionName = 'game.dll'
+$script:RestartNotice = 'Fully close and restart Dark Age of Camelot for the fix to take effect.'
 $script:CoreFileNames = @(
     'game.dll',
     'libxml2.dll',
@@ -947,21 +948,19 @@ function Invoke-AutomaticFix {
             Write-Log -Level 'INFO' -Message "Exact process exclusion already present: $processName"
         }
 
-        if ([string]::IsNullOrWhiteSpace([string]$result.FatalError) -and $failed.Count -eq 0) {
-            Write-Log -Level 'IMPORTANT' -Message 'Close and restart Dark Age of Camelot before testing the Faster Teleport/Load Times Fix.'
-        }
-
         if (-not [string]::IsNullOrWhiteSpace([string]$result.FatalError) -or $failed.Count -gt 0) {
             Set-UiStatus -Title 'Loading speed fix was incomplete' -Detail "$addedCount entries added, $existingCount already present, $($failed.Count) failed." -State 'Error' -Progress 100
             Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Error' -Message "The Faster Teleport/Load Times Fix completed with one or more configuration failures.`r`n`r`nAdded entries: $addedCount`r`nAlready present: $existingCount`r`nFailed entries: $($failed.Count)`r`n`r`nReview the activity log for the exact Windows error.`r`n$($script:LogPath)"
         }
         elseif ($warnings.Count -gt 0 -or $verificationWarnings.Count -gt 0) {
-            Set-UiStatus -Title 'Fix configured - restart DAoC' -Detail "$addedCount entries added and $existingCount already present. Close and restart Dark Age of Camelot before testing the fix." -State 'Warning' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "The supported Defender exclusion entries were configured automatically.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nWorks on both Live Dark Age of Camelot and Eden.`r`n`r`nIMPORTANT: Close and restart Dark Age of Camelot before testing the fix.`r`n`r`nWindows Defender returned one or more effective-state verification warnings. The entries were kept instead of being removed. Details are in:`r`n$($script:LogPath)"
+            Write-Log -Level 'IMPORTANT' -Message $script:RestartNotice
+            Set-UiStatus -Title 'Fix configured - restart DAoC' -Detail "$addedCount entries added and $existingCount already present. Windows reported a verification warning. $($script:RestartNotice)" -State 'Warning' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Warning' -Message "The supported Defender exclusion entries were configured automatically.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nIMPORTANT: $($script:RestartNotice)`r`n`r`nWindows Defender returned one or more effective-state verification warnings. The entries were kept instead of being removed. Details are in:`r`n$($script:LogPath)"
         }
         else {
-            Set-UiStatus -Title 'Fix completed - restart DAoC' -Detail "$addedCount entries added and verified; $existingCount were already present. Close and restart Dark Age of Camelot before testing the fix." -State 'Good' -Progress 100
-            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Information' -Message "The Faster Teleport/Load Times Fix completed successfully.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nThe tool configured each validated DAoC folder, its existing core files, and the game.dll process exclusion.`r`n`r`nWorks on both Live Dark Age of Camelot and Eden.`r`n`r`nIMPORTANT: Close and restart Dark Age of Camelot before testing the fix."
+            Write-Log -Level 'IMPORTANT' -Message $script:RestartNotice
+            Set-UiStatus -Title 'Loading speed fix completed - restart DAoC' -Detail "$addedCount entries added and verified; $existingCount were already present. $($script:RestartNotice)" -State 'Good' -Progress 100
+            Show-Dialog -Title 'DAoC Loading Speed Fix - By Cosmy' -Kind 'Information' -Message "The Faster Teleport/Load Times Fix completed successfully.`r`n`r`nValidated installations: $($installations.Count)`r`nNew exact entries: $addedCount`r`nAlready present: $existingCount`r`nProcess exclusion: $($script:ProcessExclusionName)`r`n`r`nThe tool configured each validated DAoC folder, its existing core files, and the game.dll process exclusion.`r`n`r`nIMPORTANT: $($script:RestartNotice)"
         }
     }
     catch {
@@ -1195,12 +1194,7 @@ function Get-BitmapImage {
                         <Grid Margin="0,9,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <Ellipse Width="8" Height="8" Fill="#D9D2CC" VerticalAlignment="Top" Margin="0,5,0,0"/>
-                            <TextBlock Grid.Column="1" Text="Verify, log, and save rollback state" Foreground="#E6D8CC" TextWrapping="Wrap"/>
-                        </Grid>
-                        <Grid Margin="0,9,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <Ellipse Width="8" Height="8" Fill="#2F855A" VerticalAlignment="Top" Margin="0,5,0,0"/>
-                            <TextBlock Grid.Column="1" Text="Restart Dark Age of Camelot after completion" Foreground="#E6D8CC" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Column="1" Text="Verify, save rollback state, then restart DAoC" Foreground="#E6D8CC" TextWrapping="Wrap"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -1208,7 +1202,6 @@ function Get-BitmapImage {
                 <StackPanel Grid.Row="4" Margin="2,18,2,0">
                     <TextBlock Text="VERSION 1.0.2" Foreground="#BDA38F" FontSize="11" FontWeight="SemiBold"/>
                     <TextBlock Text="One normal UAC approval is required by Windows. No folder selection is required on Windows 10 or Windows 11." Foreground="#A88F7F" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
-                    <TextBlock Text="Works on both Live Dark Age of Camelot and Eden. After completion, close and restart Dark Age of Camelot." Foreground="#F0A15E" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,7,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -1244,10 +1237,7 @@ function Get-BitmapImage {
                     </Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock x:Name="StatusTitle" Text="Ready" FontSize="19" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="StatusDetail" Text="The Faster Teleport/Load Times Fix starts automatically." Foreground="{StaticResource MutedBrush}" Margin="0,6,18,0" TextWrapping="Wrap"/>
-                        <Border Background="#2A1711" BorderBrush="#A75224" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,10,18,0">
-                            <TextBlock Text="WORKS WITH LIVE DAoC AND EDEN. RESTART REQUIRED: After completion, close and restart Dark Age of Camelot before testing the fix." Foreground="#F0A15E" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                        </Border>
+                        <TextBlock x:Name="StatusDetail" Text="The Faster Teleport/Load Times Fix starts automatically. Restart Dark Age of Camelot after completion." Foreground="{StaticResource MutedBrush}" Margin="0,6,18,0" TextWrapping="Wrap"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100" Value="0"/>

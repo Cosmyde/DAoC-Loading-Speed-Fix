@@ -17,9 +17,13 @@ A one-click Windows utility for the Dark Age of Camelot Faster Teleport/Load Tim
 1. Download and extract the release ZIP to a local folder.
 2. Double-click `Run-DAoC-Loading-Speed-Fix.cmd`.
 3. Approve the Windows administrator prompt.
-4. After the application reports completion, close and restart Dark Age of Camelot before testing teleport or load times.
+4. When the tool reports completion, fully close and restart Dark Age of Camelot.
 
 The application opens maximized and the fix starts automatically. No DAoC folder selection or manual Windows Security configuration is required.
+
+## Restart required
+
+After the exclusions are applied, fully close every running Dark Age of Camelot client and start the game again. The Faster Teleport/Load Times Fix takes effect after the game is restarted.
 
 ## What the tool does
 
@@ -31,10 +35,6 @@ The application opens maximized and the fix starts automatically. No DAoC folder
 - Uses `MpCmdRun.exe -CheckExclusion -Path` as an additional verification check when available.
 - Saves a detailed activity log.
 - Keeps a rollback record for exclusions created by the tool.
-
-## Restart required
-
-Restart Dark Age of Camelot for the fix to take effect. After the exclusions are applied, close the running game client completely, then launch it again. If the game was not running, start it after the tool reports completion.
 
 ## Safety
 
@@ -51,6 +51,30 @@ Open the application and select **Roll back**. Only exact path and process exclu
 ```text
 C:\ProgramData\DAoCLoadingSpeedFix\Logs
 C:\ProgramData\DAoCLoadingSpeedFix\state.json
+```
+
+## Project files
+
+```text
+DAoC-Loading-Speed-Fix.ps1
+DAoC-Loading-Speed-Fix-Helper.ps1
+Run-DAoC-Loading-Speed-Fix.cmd
+Assets\AppBanner.png
+Assets\AppIcon.ico
+```
+
+## Build and validation
+
+Run the project validation:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Project.ps1
+```
+
+Build a release ZIP:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1
 ```
 
 Created by Cosmy.
